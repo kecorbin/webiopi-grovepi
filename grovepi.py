@@ -2,17 +2,25 @@
 import smbus
 from webiopi.utils import logger
 import time
-import math
+from webiopi.utils.types import M_JSON
 import RPi.GPIO as GPIO
-import struct
-import sys
 from webiopi.decorators.rest import request, response
-debug = 0
+debug = 1
 
+class GroveGPIO():
+    IN = 0
+    OUT = 1
 
-class GrovePi():
-    #FUNCTIONS = [GPIOPort.IN for i in range(8)]
+    LOW = False
+    HIGH = True
 
+class GrovePi(GroveGPIO):
+    FUNCTIONS = [GroveGPIO.IN for i in range(8)]
+    IN = 0
+    OUT = 1
+
+    LOW = False
+    HIGH = True
 
     def __init__(self):
         self.__dWrite_cmd = [2]
@@ -62,11 +70,23 @@ class GrovePi():
             self.write_i2c_block(self.__address, self.__pMode_cmd + [pin, 0, self.__unused])
         return 1
 
-    def __getFunction__(self, channel):
+    def getFunction(self, channel):
         raise NotImplementedError
 
-    def __setFunction__(self, channel, value):
-        raise NotImplementedError
+    def setFunction(self, channel, value):
+        if not value in [self.IN, self.OUT]:
+            raise ValueError("Request function not supported")
+        self.pinMode(channel, value)
+
+    def checkChannel(self, channel):
+        if not channel in range(8):
+            raise ValueError("Channel %d invalid" % channel)
+
+    @request("GET", "digital/output/%(channel)d")
+    @response("%d")
+    def digitalReadOutput(self, channel):
+        self.checkChannel(channel)
+        return self.digitalRead(channel)
 
     @request("GET", "digital/output/%(channel)d")
     @response("%d")
@@ -77,13 +97,37 @@ class GrovePi():
         n = self.read_i2c_byte(self.__address)
         return n
 
-
     @request("POST", "digital/output/%(channel)d/%(value)d")
     @response("%d")
     def digitalWrite(self, channel, value):
         logger.info("Executing write_i2c_block")
         self.write_i2c_block(self.__address, self.__dWrite_cmd + [channel, value, self.__unused])
         return 1
+
+    @request("GET", "digital/*")
+    @response(contentType=M_JSON)
+    def readAll(self):
+        logger.info('Getting all GrovePi readings')
+        inputs = {}
+        outputs = {}
+        for i in range(8):
+            inputs[i] = self.digitalRead(i)
+            outputs[i] = self.digitalReadOutput(i)
+        logger.info('Inputs are {}'.format(inputs))
+        logger.info('Outputs are {}'.format(outputs))
+        return {"input": inputs, "output": outputs}
+
+    @request("GET", "%(channel)d/function")
+    def getFunctionString(self, channel):
+        func = self.getFunction(channel)
+        if func == self.IN:
+            return "IN"
+        elif func == self.OUT:
+            return "OUT"
+#        elif func == GPIO.PWM:
+#            return "PWM"
+        else:
+            return "UNKNOWN"
 
 
     def __portRead__(self):
